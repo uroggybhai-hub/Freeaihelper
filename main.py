@@ -19,7 +19,7 @@ MUTE_DURATION_SECONDS = 3600
 CLEANUP_INTERVAL = 59
 
 # ---------- OPENAI API KEY (CORRECT ENDPOINT & MODEL) ----------
-OPENAI_API_KEY = "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"
+OPENAI_API_KEY = "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"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL = "gpt-4o-mini"  # Safer, widely available
 
