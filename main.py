@@ -18,10 +18,10 @@ WARN_LIMIT = 3
 MUTE_DURATION_SECONDS = 3600
 CLEANUP_INTERVAL = 59
 
-# ---------- OPENAI API KEY ----------
+# ---------- OPENAI API KEY (CORRECT ENDPOINT & MODEL) ----------
 OPENAI_API_KEY = "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"
-OPENAI_URL = "https://api.openai.com/v1/responses"
-OPENAI_MODEL = "gpt-5.4-mini"  # as per user's curl
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_MODEL = "gpt-4o-mini"  # Safer, widely available
 
 # ---------- NO FALLBACK REPLIES – ONLY API OR ERROR ----------
 
@@ -214,7 +214,7 @@ def get_settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(buttons)
 
-# ---------- MAINTENANCE MODE (global, in bot_data) ----------
+# ---------- MAINTENANCE MODE ----------
 MAINTENANCE_KEY = "maintenance_mode"
 
 async def maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -686,7 +686,7 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_msg[chat_id][user.id] = text
         spam_warns[chat_id][user.id] = 0
 
-# ---------- GIRL AUTO-REPLY – OPENAI API ----------
+# ---------- GIRL AUTO-REPLY – OPENAI API (CORRECT) ----------
 async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -713,13 +713,16 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply)
         return
 
-    # Prepare OpenAI payload
+    # Prepare OpenAI chat completions payload
     prompt = f"Tu ek desi ladki hai jo Hinglish mein baat karti hai, emoji aur attitude ke saath. User ne kaha: '{user_msg}'. Chhota ya detailed reply dekh kar de – chhoti baat par chhota, badi baat par detailed."
 
     payload = {
         "model": OPENAI_MODEL,
-        "input": prompt,
-        "store": True  # as per curl
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 200 if len(user_msg) < 20 else 300,
+        "temperature": 0.85
     }
     headers = {
         "Content-Type": "application/json",
@@ -732,26 +735,7 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if response.status_code == 200:
                 data = response.json()
                 try:
-                    # OpenAI responses endpoint returns output in 'output' field
-                    # It may have choices or something. We'll try to extract text.
-                    # The curl example uses /responses, which is not standard. We'll try to parse.
-                    # We'll attempt to get the text from the response.
-                    if "output" in data and data["output"]:
-                        # For the responses endpoint, the output might be a list of messages.
-                        # We'll just get the first message content.
-                        if isinstance(data["output"], list) and len(data["output"]) > 0:
-                            if "content" in data["output"][0]:
-                                reply = data["output"][0]["content"].strip()
-                            else:
-                                # fallback
-                                reply = str(data["output"])
-                        else:
-                            reply = str(data["output"])
-                    elif "choices" in data and data["choices"]:
-                        reply = data["choices"][0]["message"]["content"].strip()
-                    else:
-                        # fallback: try to get any text
-                        reply = str(data)
+                    reply = data['choices'][0]['message']['content'].strip()
                     reply = reply.strip('"').strip("'")
                     if len(reply) > 300:
                         reply = reply[:300] + "..."
