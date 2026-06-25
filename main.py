@@ -10,7 +10,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPer
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, JobQueue
 
 # ---------- CONFIG (TUNA DAAL DIYA HAI) ----------
-BOT_TOKEN = "8949615977:AAHnoUrr9staN9AL_hOTW9boeY6dTxQJAUk"
+BOT_TOKEN = "8949615977:AAGr7oJagOGpgtq_t_AgJWXOd5Sj25mrmcY"
 OWNER_ID = 8477195695
 CO_OWNER_IDS = [8477195695]  # Co-Founders list
 
