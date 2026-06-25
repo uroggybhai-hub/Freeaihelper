@@ -3,7 +3,6 @@ import sqlite3
 import re
 import html
 import random
-import asyncio
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
@@ -16,10 +15,10 @@ OWNER_ID = 8477195695
 CO_OWNER_IDS = [8477195695]
 
 WARN_LIMIT = 3
-MUTE_DURATION_SECONDS = 3600  # 1 hour
-CLEANUP_INTERVAL = 59  # minutes
+MUTE_DURATION_SECONDS = 3600
+CLEANUP_INTERVAL = 59
 
-# ---------- GIRL REPLIES (50+ unique) ----------
+# ---------- GIRL REPLIES ----------
 GIRL_REPLIES = [
     "Haan boliye na 😘 aapka intezaar tha 🥺",
     "Arre kya haal hai aapke? 🫠 kuch naya?",
@@ -92,24 +91,17 @@ BADWORD_REPLIES = [
     "Maine aapki message delete kar di, kyunki main aapki dost hoon 🥺"
 ]
 
-# ---------- STICKER FILE IDs (random) ----------
+# Stickers: Replace with actual file_ids from your bot. If empty, no stickers sent.
 STICKERS = [
-    "CAACAgQAAxkBAAED2TVl7HmHxYz...",  # replace with actual sticker IDs
+    "CAACAgQAAxkBAAED2TVl7HmHxYz...",
     "CAACAgQAAxkBAAED2TZl7HmHxYz...",
-    # ... at least 5-10 sticker file_ids from your bot's sticker set
+    "CAACAgQAAxkBAAED2Tdl7HmHxYz...",
 ]
-
-# We'll add a fallback: if no sticker, just send a random emoji.
-
-# ---------- SPAM DETECTION ----------
-last_msg: Dict[int, Dict[int, str]] = {}  # chat_id -> {user_id: last_message_text}
-spam_warns: Dict[int, Dict[int, int]] = {}  # chat_id -> {user_id: warn_count for spam}
 
 # ---------- DATABASE ----------
 conn = sqlite3.connect("oggy_data.db", check_same_thread=False)
 c = conn.cursor()
 
-# Add girl_mode and other settings
 try:
     c.execute("ALTER TABLE group_settings ADD COLUMN girl_mode INTEGER DEFAULT 1")
 except sqlite3.OperationalError:
@@ -141,7 +133,7 @@ def get_setting(chat_id: int, key: str) -> bool:
             return bool(val)
         return bool(row[0])
     except:
-        return True  # fallback
+        return True
 
 def set_setting(chat_id: int, key: str, value: bool):
     c.execute(f"UPDATE group_settings SET {key}=? WHERE chat_id=?", (1 if value else 0, chat_id))
@@ -245,13 +237,13 @@ async def can_use_cleaner_cmd(user_id: int, chat_id: int, context: ContextTypes.
         return True
     return has_role(user_id, chat_id, ["Cleaner"])
 
-# ---------- NOTIFICATION TO OWNER ----------
+# ---------- NOTIFY OWNER ----------
 async def notify_owner(context: ContextTypes.DEFAULT_TYPE, text: str):
     await context.bot.send_message(OWNER_ID, text)
     for co in CO_OWNER_IDS:
         await context.bot.send_message(co, text)
 
-# ---------- INLINE KEYBOARDS (unchanged) ----------
+# ---------- INLINE KEYBOARDS ----------
 def get_roles_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton("👑 Founder", callback_data=f"role_Founder_{chat_id}"),
@@ -323,7 +315,7 @@ async def cleanercmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "/logdel - Delete & log to channel")
     await update.message.reply_text(txt, parse_mode="Markdown")
 
-# ---------- ROLE & SETTINGS (same as before, but with girl_mode toggle) ----------
+# ---------- ROLE MANAGEMENT ----------
 async def roles_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context):
         return await update.message.reply_text("❌ Sirf Admin/Founder/Co-Founder.")
@@ -358,6 +350,7 @@ async def handle_role_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {target.mention_html()} assigned as `{role}`", parse_mode="HTML")
     del context.user_data['pending_role']
 
+# ---------- SETTINGS ----------
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context):
         return
@@ -375,7 +368,6 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📝 Send me the **Log Channel ID** now.\n(Reply to this message with the ID)")
         context.user_data['awaiting_log'] = chat_id
         return
-    # Toggle settings
     setting_map = {"link": "link_guard", "dm": "dm_guard", "badword": "badword_guard", "cleanup": "cleanup_enabled", "girl": "girl_mode"}
     key = setting_map.get(action)
     if key:
@@ -397,7 +389,7 @@ async def handle_log_channel(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Invalid ID. Send numeric ID.")
     del context.user_data['awaiting_log']
 
-# ---------- ADMIN/MOD COMMANDS (with notifications) ----------
+# ---------- ADMIN/MOD COMMANDS (All defined) ----------
 async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context):
         return
@@ -430,6 +422,42 @@ async def unwarn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Warns reset for {user.mention_html()}.", parse_mode="HTML")
     await notify_owner(context, f"✅ Warns reset for {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
 
+async def warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context):
+        return
+    chat_id = update.effective_chat.id
+    all_w = get_all_warns(chat_id)
+    if not all_w:
+        return await update.message.reply_text("No warns in this group.")
+    txt = "📊 **Warn List:**\n"
+    for uid, cnt in all_w:
+        try:
+            user = await context.bot.get_chat(uid)
+            name = user.full_name or str(uid)
+        except:
+            name = str(uid)
+        txt += f"• {html.escape(name)}: {cnt}/{WARN_LIMIT}\n"
+    await update.message.reply_text(txt, parse_mode="Markdown")
+
+async def delwarn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context):
+        return
+    if not update.message.reply_to_message:
+        return
+    user = update.message.reply_to_message.from_user
+    try:
+        await update.message.reply_to_message.delete()
+    except:
+        pass
+    count = add_warn(user.id, update.effective_chat.id)
+    await update.message.reply_text(f"🗑️ Deleted msg & warned {user.mention_html()} ({count}/{WARN_LIMIT})", parse_mode="HTML")
+    if count >= WARN_LIMIT:
+        set_mute(user.id, update.effective_chat.id, MUTE_DURATION_SECONDS)
+        await context.bot.restrict_chat_member(update.effective_chat.id, user.id, ChatPermissions(can_send_messages=False))
+        await update.message.reply_text(f"🔇 {user.mention_html()} muted.", parse_mode="HTML")
+        reset_warns(user.id, update.effective_chat.id)
+        await notify_owner(context, f"🔇 Muted (delwarn): {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
+
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context): return
     if not update.message.reply_to_message: return
@@ -437,6 +465,14 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.ban_chat_member(update.effective_chat.id, user.id)
     await update.message.reply_text(f"🔨 {user.mention_html()} banned.", parse_mode="HTML")
     await notify_owner(context, f"🔨 Banned: {user.full_name} (ID: {user.id}) from {update.effective_chat.title or 'group'}")
+
+async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context): return
+    if not update.message.reply_to_message: return
+    user = update.message.reply_to_message.from_user
+    await context.bot.unban_chat_member(update.effective_chat.id, user.id)
+    await update.message.reply_text(f"🔓 {user.mention_html()} unbanned.", parse_mode="HTML")
+    await notify_owner(context, f"🔓 Unbanned: {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
 
 async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context): return
@@ -457,207 +493,60 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔇 {user.mention_html()} muted for {duration} min.", parse_mode="HTML")
     await notify_owner(context, f"🔇 Muted: {user.full_name} (ID: {user.id}) for {duration} min in {update.effective_chat.title or 'group'}")
 
-# ... (other commands like info, staff, etc. remain unchanged; we'll add notifications for mute/unmute etc.)
+async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context): return
+    if not update.message.reply_to_message: return
+    user = update.message.reply_to_message.from_user
+    remove_mute(user.id, update.effective_chat.id)
+    await context.bot.restrict_chat_member(update.effective_chat.id, user.id, ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True))
+    await update.message.reply_text(f"🔊 {user.mention_html()} unmuted.", parse_mode="HTML")
+    await notify_owner(context, f"🔊 Unmuted: {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
 
-# ---------- GIRL MODE TOGGLE ----------
-async def girlmode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context):
-        return await update.message.reply_text("❌ Sirf Admin/Founder/Co-Founder.")
+async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context): return
+    target = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
+    role = get_role(target.id, update.effective_chat.id)
+    warns = get_warn_count(target.id, update.effective_chat.id)
+    txt = f"👤 **Info**\nID: `{target.id}`\nRole: {role}\nWarns: {warns}/{WARN_LIMIT}"
+    await update.message.reply_text(txt, parse_mode="Markdown")
+
+async def infopvt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context): return
+    target = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
+    role = get_role(target.id, update.effective_chat.id)
+    warns = get_warn_count(target.id, update.effective_chat.id)
+    txt = f"👤 **Info (Private)**\nID: `{target.id}`\nRole: {role}\nWarns: {warns}/{WARN_LIMIT}"
+    await context.bot.send_message(target.id, txt, parse_mode="Markdown")
+
+async def staff(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context): return
     chat_id = update.effective_chat.id
-    args = context.args
-    if not args:
-        current = get_setting(chat_id, "girl_mode")
-        status = "ON" if current else "OFF"
-        return await update.message.reply_text(f"💁‍♀️ Girl mode is currently: {status}\nTo toggle: /girlmode on/off")
-    if args[0].lower() == "on":
-        set_setting(chat_id, "girl_mode", True)
-        await update.message.reply_text("💁‍♀️ Girl mode enabled! Ab main sabko ladki jaisi replies dungi 😘")
-    elif args[0].lower() == "off":
-        set_setting(chat_id, "girl_mode", False)
-        await update.message.reply_text("💁‍♀️ Girl mode disabled. Ab main normal helper ban jaungi 😐")
-    else:
-        await update.message.reply_text("Usage: /girlmode on/off")
-
-# ---------- GIRL AUTO-REPLY WITH STICKER ----------
-async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        return
-    if not update.message or not update.message.text:
-        return
-    if update.message.text.startswith("/"):
-        return
-    if update.effective_user.id == context.bot.id:
-        return
-    chat_id = update.effective_chat.id
-    if not get_setting(chat_id, "girl_mode"):
-        return
-
-    # Check for hack queries (BGMI etc.)
-    text = update.message.text.lower()
-    if re.search(r'(hack|cheat|mod|bgmi|free fire|ff|injector|aimbot|wallhack|esp)', text):
-        reply = f"Arey bhai, hack ke liye @UROGGY ko DM karo 😏, woh expert hai. Main toh bas pyaar baantti hu 💖"
-        await update.message.reply_text(reply)
-        return
-
-    # Normal reply: pick random from GIRL_REPLIES
-    reply = random.choice(GIRL_REPLIES)
-    # Add extra emoji if missing
-    if not any(emoji in reply for emoji in ["😘","🥺","😍","😈","🔥","❤️","💋","🫠","🥰","😭","🌚","🤡","🥀","😎","🧠","🌹","🌸","💖"]):
-        reply += random.choice([" 😘", " 🥰", " 😍", " 💋", " ❤️", " 🥺", " 😈"])
-    # Send reply
-    await update.message.reply_text(reply)
-
-    # Randomly send a sticker (20% chance)
-    if random.random() < 0.2 and STICKERS:
-        sticker = random.choice(STICKERS)
-        try:
-            await update.message.reply_sticker(sticker)
-        except:
-            pass  # sticker invalid
-
-# ---------- SPAM DETECTION ----------
-async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        return
-    if not update.message or not update.message.text:
-        return
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-    if user.id == context.bot.id or await can_use_mod_cmd(user.id, chat_id, context):
-        return
-    text = update.message.text
-    if chat_id not in last_msg:
-        last_msg[chat_id] = {}
-    if user.id in last_msg[chat_id] and last_msg[chat_id][user.id] == text:
-        # Same message repeated
-        if chat_id not in spam_warns:
-            spam_warns[chat_id] = {}
-        spam_warns[chat_id][user.id] = spam_warns[chat_id].get(user.id, 0) + 1
-        if spam_warns[chat_id][user.id] >= 3:
-            # Warn and mute
-            count = add_warn(user.id, chat_id)
-            await update.message.delete()
-            await update.message.reply_text(f"🚫 Spam mat karo! Warn {count}/{WARN_LIMIT}")
-            if count >= WARN_LIMIT:
-                set_mute(user.id, chat_id, MUTE_DURATION_SECONDS)
-                await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
-                await update.message.reply_text(f"🔇 {user.mention_html()} muted for 1 hour (spam).", parse_mode="HTML")
-                reset_warns(user.id, chat_id)
-                await notify_owner(context, f"🔇 Muted (spam): {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
-            spam_warns[chat_id][user.id] = 0  # reset spam count after warn
-        else:
-            # Delete and warn
-            await update.message.delete()
-            await update.message.reply_text(f"⚠️ Same message repeated! Spam warning {spam_warns[chat_id][user.id]}/3")
-    else:
-        last_msg[chat_id][user.id] = text
-        spam_warns[chat_id][user.id] = 0  # reset spam count
-
-# ---------- BADWORD FILTER (with girl scolding) ----------
-async def filter_badwords(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        return
-    if not update.message: return
-    if not get_setting(update.effective_chat.id, "badword_guard"):
-        return
-    user = update.effective_user
-    if await can_use_mod_cmd(user.id, update.effective_chat.id, context):
-        return
-    text = update.message.text or ""
-    c.execute("SELECT word FROM bad_words WHERE chat_id=?", (update.effective_chat.id,))
-    bads = [row[0] for row in c.fetchall()]
-    for bw in bads:
-        if bw.lower() in text.lower():
-            try:
-                await update.message.delete()
-            except: pass
-            count = add_warn(user.id, update.effective_chat.id)
-            warning = random.choice(BADWORD_REPLIES)
-            await update.message.reply_text(f"{warning}\n⚠️ Warn {count}/{WARN_LIMIT}")
-            if count >= WARN_LIMIT:
-                set_mute(user.id, update.effective_chat.id, MUTE_DURATION_SECONDS)
-                await context.bot.restrict_chat_member(update.effective_chat.id, user.id, ChatPermissions(can_send_messages=False))
-                await update.message.reply_text(f"🔇 {user.mention_html()} muted for 1 hour (bad words).", parse_mode="HTML")
-                reset_warns(user.id, update.effective_chat.id)
-                await notify_owner(context, f"🔇 Muted (bad words): {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
-            break
-
-# ---------- LINK FILTER ----------
-async def filter_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        return
-    if not update.message: return
-    if not get_setting(update.effective_chat.id, "link_guard"):
-        return
-    user = update.effective_user
-    if await can_use_mod_cmd(user.id, update.effective_chat.id, context):
-        return
-    text = update.message.text or update.message.caption or ""
-    if re.search(r'(http|t\.me|telegram)', text, re.I):
-        try:
-            await update.message.delete()
-        except: pass
-        count = add_warn(user.id, update.effective_chat.id)
-        await update.message.reply_text(f"🚫 Link daalna mana! Warn {count}/{WARN_LIMIT}")
-        if count >= WARN_LIMIT:
-            set_mute(user.id, update.effective_chat.id, MUTE_DURATION_SECONDS)
-            await context.bot.restrict_chat_member(update.effective_chat.id, user.id, ChatPermissions(can_send_messages=False))
-            await update.message.reply_text(f"🔇 {user.mention_html()} muted for 1 hour (link spam).", parse_mode="HTML")
-            reset_warns(user.id, update.effective_chat.id)
-            await notify_owner(context, f"🔇 Muted (links): {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
-
-# ---------- STORE MESSAGES FOR CLEANUP ----------
-message_store: Dict[int, List[int]] = {}
-async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        return
-    if not get_setting(update.effective_chat.id, "cleanup_enabled"):
-        return
-    if update.message:
-        msg_id = update.message.message_id
-        chat_id = update.effective_chat.id
-        if chat_id not in message_store:
-            message_store[chat_id] = []
-        message_store[chat_id].append(msg_id)
-        if len(message_store[chat_id]) > 5000:
-            message_store[chat_id] = message_store[chat_id][-5000:]
-
-async def cleanup_messages(context: ContextTypes.DEFAULT_TYPE):
-    for chat_id, msg_ids in message_store.items():
-        if not msg_ids: continue
-        if not get_setting(chat_id, "cleanup_enabled"):
+    admins = await context.bot.get_chat_administrators(chat_id)
+    txt = "👥 **Staff List**\n"
+    for a in admins:
+        txt += f"• {a.user.full_name} ({a.status})\n"
+    c.execute("SELECT user_id, role FROM user_roles WHERE chat_id=?", (chat_id,))
+    custom = c.fetchall()
+    for uid, role in custom:
+        if uid in [a.user.id for a in admins]:
             continue
         try:
-            for i in range(0, len(msg_ids), 100):
-                batch = msg_ids[i:i+100]
-                for mid in batch:
-                    try:
-                        await context.bot.delete_message(chat_id, mid)
-                    except:
-                        pass
-            message_store[chat_id] = []
-        except Exception as e:
-            logging.error(f"Cleanup error {chat_id}: {e}")
+            user = await context.bot.get_chat(uid)
+            name = user.full_name
+        except:
+            name = str(uid)
+        txt += f"• {name} ({role})\n"
+    await update.message.reply_text(txt, parse_mode="Markdown")
 
-# ---------- DM HANDLER ----------
-async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != "private":
-        return
-    user = update.effective_user
-    if user.id == OWNER_ID or user.id in CO_OWNER_IDS:
-        return
-    try:
-        await update.message.delete()
-    except:
-        pass
-    count = add_warn(user.id, user.id)
-    await context.bot.send_message(user.id, f"⚠️ DM karna mana hai! {count}/{WARN_LIMIT} warnings. Next time block.")
-    if count >= WARN_LIMIT:
-        reset_warns(user.id, user.id)
-        await context.bot.block_user(user.id)
-    await notify_owner(context, f"📩 DM attempt: {user.full_name} (ID: {user.id}) – warned ({count})")
+async def intervention(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context): return
+    txt = f"🚨 Intervention requested by {update.effective_user.mention_html()} in {update.effective_chat.title or 'Group'}!"
+    await context.bot.send_message(OWNER_ID, txt, parse_mode="HTML")
+    for co in CO_OWNER_IDS:
+        await context.bot.send_message(co, txt, parse_mode="HTML")
+    await update.message.reply_text("✅ Support notified.")
 
-# ---------- OTHER COMMANDS (unchanged, with notifications added) ----------
+# ---------- OTHER COMMANDS ----------
 async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context): return
     context.bot_data.pop(f"admins_{update.effective_chat.id}", None)
@@ -698,6 +587,200 @@ async def me_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = f"👤 **Your Info**\nID: `{user.id}`\nRole: {role}\nWarns: {warns}/{WARN_LIMIT}"
     await update.message.reply_text(txt, parse_mode="Markdown")
 
+async def girlmode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context):
+        return await update.message.reply_text("❌ Sirf Admin/Founder/Co-Founder.")
+    chat_id = update.effective_chat.id
+    args = context.args
+    if not args:
+        current = get_setting(chat_id, "girl_mode")
+        status = "ON" if current else "OFF"
+        return await update.message.reply_text(f"💁‍♀️ Girl mode is currently: {status}\nTo toggle: /girlmode on/off")
+    if args[0].lower() == "on":
+        set_setting(chat_id, "girl_mode", True)
+        await update.message.reply_text("💁‍♀️ Girl mode enabled! Ab main sabko ladki jaisi replies dungi 😘")
+    elif args[0].lower() == "off":
+        set_setting(chat_id, "girl_mode", False)
+        await update.message.reply_text("💁‍♀️ Girl mode disabled. Ab main normal helper ban jaungi 😐")
+    else:
+        await update.message.reply_text("Usage: /girlmode on/off")
+
+# ---------- AUTO FILTERS ----------
+message_store: Dict[int, List[int]] = {}
+
+async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+    if not get_setting(update.effective_chat.id, "cleanup_enabled"):
+        return
+    if update.message:
+        msg_id = update.message.message_id
+        chat_id = update.effective_chat.id
+        if chat_id not in message_store:
+            message_store[chat_id] = []
+        message_store[chat_id].append(msg_id)
+        if len(message_store[chat_id]) > 5000:
+            message_store[chat_id] = message_store[chat_id][-5000:]
+
+async def cleanup_messages(context: ContextTypes.DEFAULT_TYPE):
+    for chat_id, msg_ids in message_store.items():
+        if not msg_ids: continue
+        if not get_setting(chat_id, "cleanup_enabled"):
+            continue
+        try:
+            for i in range(0, len(msg_ids), 100):
+                batch = msg_ids[i:i+100]
+                for mid in batch:
+                    try:
+                        await context.bot.delete_message(chat_id, mid)
+                    except:
+                        pass
+            message_store[chat_id] = []
+        except Exception as e:
+            logging.error(f"Cleanup error {chat_id}: {e}")
+
+# ---------- LINK & BADWORD FILTERS ----------
+async def filter_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+    if not update.message: return
+    if not get_setting(update.effective_chat.id, "link_guard"):
+        return
+    user = update.effective_user
+    if await can_use_mod_cmd(user.id, update.effective_chat.id, context):
+        return
+    text = update.message.text or update.message.caption or ""
+    if re.search(r'(http|t\.me|telegram)', text, re.I):
+        try:
+            await update.message.delete()
+        except: pass
+        count = add_warn(user.id, update.effective_chat.id)
+        await update.message.reply_text(f"🚫 Link daalna mana! Warn {count}/{WARN_LIMIT}")
+        if count >= WARN_LIMIT:
+            set_mute(user.id, update.effective_chat.id, MUTE_DURATION_SECONDS)
+            await context.bot.restrict_chat_member(update.effective_chat.id, user.id, ChatPermissions(can_send_messages=False))
+            await update.message.reply_text(f"🔇 {user.mention_html()} muted for 1 hour (link spam).", parse_mode="HTML")
+            reset_warns(user.id, update.effective_chat.id)
+            await notify_owner(context, f"🔇 Muted (links): {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
+
+async def filter_badwords(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+    if not update.message: return
+    if not get_setting(update.effective_chat.id, "badword_guard"):
+        return
+    user = update.effective_user
+    if await can_use_mod_cmd(user.id, update.effective_chat.id, context):
+        return
+    text = update.message.text or ""
+    c.execute("SELECT word FROM bad_words WHERE chat_id=?", (update.effective_chat.id,))
+    bads = [row[0] for row in c.fetchall()]
+    for bw in bads:
+        if bw.lower() in text.lower():
+            try:
+                await update.message.delete()
+            except: pass
+            count = add_warn(user.id, update.effective_chat.id)
+            warning = random.choice(BADWORD_REPLIES)
+            await update.message.reply_text(f"{warning}\n⚠️ Warn {count}/{WARN_LIMIT}")
+            if count >= WARN_LIMIT:
+                set_mute(user.id, update.effective_chat.id, MUTE_DURATION_SECONDS)
+                await context.bot.restrict_chat_member(update.effective_chat.id, user.id, ChatPermissions(can_send_messages=False))
+                await update.message.reply_text(f"🔇 {user.mention_html()} muted for 1 hour (bad words).", parse_mode="HTML")
+                reset_warns(user.id, update.effective_chat.id)
+                await notify_owner(context, f"🔇 Muted (bad words): {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
+            break
+
+# ---------- SPAM DETECTION ----------
+last_msg: Dict[int, Dict[int, str]] = {}
+spam_warns: Dict[int, Dict[int, int]] = {}
+
+async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+    if not update.message or not update.message.text:
+        return
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    if user.id == context.bot.id or await can_use_mod_cmd(user.id, chat_id, context):
+        return
+    text = update.message.text
+    if chat_id not in last_msg:
+        last_msg[chat_id] = {}
+    if user.id in last_msg[chat_id] and last_msg[chat_id][user.id] == text:
+        if chat_id not in spam_warns:
+            spam_warns[chat_id] = {}
+        spam_warns[chat_id][user.id] = spam_warns[chat_id].get(user.id, 0) + 1
+        if spam_warns[chat_id][user.id] >= 3:
+            count = add_warn(user.id, chat_id)
+            await update.message.delete()
+            await update.message.reply_text(f"🚫 Spam mat karo! Warn {count}/{WARN_LIMIT}")
+            if count >= WARN_LIMIT:
+                set_mute(user.id, chat_id, MUTE_DURATION_SECONDS)
+                await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
+                await update.message.reply_text(f"🔇 {user.mention_html()} muted for 1 hour (spam).", parse_mode="HTML")
+                reset_warns(user.id, chat_id)
+                await notify_owner(context, f"🔇 Muted (spam): {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
+            spam_warns[chat_id][user.id] = 0
+        else:
+            await update.message.delete()
+            await update.message.reply_text(f"⚠️ Same message repeated! Spam warning {spam_warns[chat_id][user.id]}/3")
+    else:
+        last_msg[chat_id][user.id] = text
+        spam_warns[chat_id][user.id] = 0
+
+# ---------- GIRL AUTO-REPLY (with hack detection) ----------
+async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+    if not update.message or not update.message.text:
+        return
+    if update.message.text.startswith("/"):
+        return
+    if update.effective_user.id == context.bot.id:
+        return
+    chat_id = update.effective_chat.id
+    if not get_setting(chat_id, "girl_mode"):
+        return
+
+    text = update.message.text.lower()
+    # Hack detection
+    if re.search(r'(hack|cheat|mod|bgmi|free fire|ff|injector|aimbot|wallhack|esp)', text):
+        reply = f"Arey bhai, hack ke liye @UROGGY ko DM karo 😏, woh expert hai. Main toh bas pyaar baantti hu 💖"
+        await update.message.reply_text(reply)
+        return
+
+    # Normal reply
+    reply = random.choice(GIRL_REPLIES)
+    if not any(emoji in reply for emoji in ["😘","🥺","😍","😈","🔥","❤️","💋","🫠","🥰","😭","🌚","🤡","🥀","😎","🧠","🌹","🌸","💖"]):
+        reply += random.choice([" 😘", " 🥰", " 😍", " 💋", " ❤️", " 🥺", " 😈"])
+    await update.message.reply_text(reply)
+
+    # Random sticker
+    if random.random() < 0.2 and STICKERS:
+        try:
+            await update.message.reply_sticker(random.choice(STICKERS))
+        except:
+            pass
+
+# ---------- DM HANDLER ----------
+async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+        return
+    user = update.effective_user
+    if user.id == OWNER_ID or user.id in CO_OWNER_IDS:
+        return
+    try:
+        await update.message.delete()
+    except:
+        pass
+    count = add_warn(user.id, user.id)
+    await context.bot.send_message(user.id, f"⚠️ DM karna mana hai! {count}/{WARN_LIMIT} warnings. Next time block.")
+    if count >= WARN_LIMIT:
+        reset_warns(user.id, user.id)
+        await context.bot.block_user(user.id)
+    await notify_owner(context, f"📩 DM attempt: {user.full_name} (ID: {user.id}) – warned ({count})")
+
 # ---------- MAIN ----------
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -711,18 +794,18 @@ def main():
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("reload", reload))
     app.add_handler(CommandHandler("ban", ban))
+    app.add_handler(CommandHandler("unban", unban))
     app.add_handler(CommandHandler("kick", kick))
-    app.add_handler(CommandHandler("unban", unban))  # need to add unban function (simple)
     app.add_handler(CommandHandler("mute", mute))
-    app.add_handler(CommandHandler("unmute", unmute))  # need to add
-    app.add_handler(CommandHandler("info", info))  # need to add
-    app.add_handler(CommandHandler("infopvt", infopvt))  # need to add
-    app.add_handler(CommandHandler("staff", staff))  # need to add
+    app.add_handler(CommandHandler("unmute", unmute))
+    app.add_handler(CommandHandler("info", info))
+    app.add_handler(CommandHandler("infopvt", infopvt))
+    app.add_handler(CommandHandler("staff", staff))
     app.add_handler(CommandHandler("warn", warn))
     app.add_handler(CommandHandler("unwarn", unwarn))
-    app.add_handler(CommandHandler("warns", warns))  # need to add
-    app.add_handler(CommandHandler("delwarn", delwarn))  # need to add
-    app.add_handler(CommandHandler("intervention", intervention))  # need to add
+    app.add_handler(CommandHandler("warns", warns))
+    app.add_handler(CommandHandler("delwarn", delwarn))
+    app.add_handler(CommandHandler("intervention", intervention))
     app.add_handler(CommandHandler("send", send_html))
     app.add_handler(CommandHandler("del", delete_msg))
     app.add_handler(CommandHandler("logdel", logdel))
@@ -732,7 +815,6 @@ def main():
     app.add_handler(CallbackQueryHandler(roles_callback, pattern="^role_"))
     app.add_handler(CallbackQueryHandler(settings_callback, pattern="^set_"))
 
-    # Message handlers
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_dm))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_links), group=2)
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_badwords), group=3)
