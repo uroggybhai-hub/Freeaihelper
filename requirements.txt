@@ -1,4 +1,10 @@
-python-telegram-bot==22.2
-python-telegram-bot[job-queue]==22.2
-APScheduler==3.11.0
-tzlocal==5.3.1
+python-telegram-bot==20.6
+apscheduler==3.10.4
+aiogram
+requests
+aiohttp
+google-genai
+google-generativeai
+python-dotenv
+pytz
+apscheduler
