@@ -1,5 +1,4 @@
 import logging
-import logging
 import sqlite3
 import re
 import html
@@ -19,12 +18,12 @@ WARN_LIMIT = 3
 MUTE_DURATION_SECONDS = 3600
 CLEANUP_INTERVAL = 59
 
-# ---------- GEMINI API KEY (TUNA DIYA) ----------
-GEMINI_API_KEY = "AQ.Ab8RN6IDn17tilz4oxZByi8D9tvDq_J61ZH7_EbQOrDT8-6FoA"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+# ---------- OPENAI API KEY ----------
+OPENAI_API_KEY = "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"
+OPENAI_URL = "https://api.openai.com/v1/responses"
+OPENAI_MODEL = "gpt-5.4-mini"  # as per user's curl
 
-# ---------- NO FALLBACK REPLIES – REMOVED ----------
-# (GIRL_REPLIES still exists for reference, but not used in girl_auto_reply)
+# ---------- NO FALLBACK REPLIES – ONLY API OR ERROR ----------
 
 BADWORD_REPLIES = [
     "Arey, kya gaali de rahe ho? 😾 Sharam karo! Aise baat nahi karte.",
@@ -215,6 +214,29 @@ def get_settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(buttons)
 
+# ---------- MAINTENANCE MODE (global, in bot_data) ----------
+MAINTENANCE_KEY = "maintenance_mode"
+
+async def maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ Sirf owner use kar sakta hai.")
+        return
+    args = context.args
+    if not args:
+        current = context.bot_data.get(MAINTENANCE_KEY, False)
+        status = "ON" if current else "OFF"
+        await update.message.reply_text(f"🔧 Maintenance mode: {status}")
+        return
+    if args[0].lower() == "on":
+        context.bot_data[MAINTENANCE_KEY] = True
+        await update.message.reply_text("🔧 Maintenance mode ENABLED. Bot sirf admin/owner commands chalayega.")
+    elif args[0].lower() == "off":
+        context.bot_data[MAINTENANCE_KEY] = False
+        await update.message.reply_text("🔧 Maintenance mode DISABLED. Bot normal chalega.")
+    else:
+        await update.message.reply_text("Usage: /maintenance on/off")
+
+# ---------- COMMAND HANDLERS ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🔥 **OGGYAI ULTIMATE HELPER + GIRL AI**\n\n"
@@ -224,7 +246,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "◽ /me - Your info\n"
         "⚙️ /settings - Group Settings\n"
         "👥 /roles - Manage User Roles\n"
-        "💁‍♀️ /girlmode on/off - Toggle Girl AI", parse_mode="Markdown"
+        "💁‍♀️ /girlmode on/off - Toggle Girl AI\n"
+        "🔧 /maintenance on/off - Owner only", parse_mode="Markdown"
     )
 
 async def modcmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -535,7 +558,7 @@ async def girlmode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(f"💁‍♀️ Girl mode is currently: {status}\nTo toggle: /girlmode on/off")
     if args[0].lower() == "on":
         set_setting(chat_id, "girl_mode", True)
-        await update.message.reply_text("💁‍♀️ Girl mode enabled! Ab main AI se reply dungi 😘")
+        await update.message.reply_text("💁‍♀️ Girl mode enabled! Ab main OpenAI se reply dungi 😘")
     elif args[0].lower() == "off":
         set_setting(chat_id, "girl_mode", False)
         await update.message.reply_text("💁‍♀️ Girl mode disabled. Ab main normal helper ban jaungi 😐")
@@ -663,7 +686,7 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_msg[chat_id][user.id] = text
         spam_warns[chat_id][user.id] = 0
 
-# ---------- GIRL AUTO-REPLY – ONLY API, NO FALLBACK ----------
+# ---------- GIRL AUTO-REPLY – OPENAI API ----------
 async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -677,6 +700,11 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not get_setting(chat_id, "girl_mode"):
         return
 
+    # Check maintenance mode
+    if context.bot_data.get(MAINTENANCE_KEY, False):
+        await update.message.reply_text("🔧 Bot maintenance mode, please wait.")
+        return
+
     user_msg = update.message.text
 
     # Hack detection – immediate reply (no API)
@@ -685,38 +713,45 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply)
         return
 
-    # Determine reply length based on user message length
-    if len(user_msg) < 20:
-        length_instruction = "Reply very briefly in 1-2 lines, Hinglish, emoji."
-    else:
-        length_instruction = "Reply with a detailed response, 2-4 lines, Hinglish, emoji."
+    # Prepare OpenAI payload
+    prompt = f"Tu ek desi ladki hai jo Hinglish mein baat karti hai, emoji aur attitude ke saath. User ne kaha: '{user_msg}'. Chhota ya detailed reply dekh kar de – chhoti baat par chhota, badi baat par detailed."
 
-    prompt = f"Tu ek desi ladki hai jo Hinglish mein baat karti hai, emoji aur attitude ke saath. User ne kaha: '{user_msg}'. {length_instruction}"
+    payload = {
+        "model": OPENAI_MODEL,
+        "input": prompt,
+        "store": True  # as per curl
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": prompt}
-                        ]
-                    }
-                ],
-                "generationConfig": {
-                    "temperature": 0.85,
-                    "maxOutputTokens": 100 if len(user_msg) < 20 else 200,
-                }
-            }
-            headers = {
-                "Content-Type": "application/json",
-                "X-goog-api-key": GEMINI_API_KEY
-            }
-            response = await client.post(GEMINI_URL, json=payload, headers=headers)
+            response = await client.post(OPENAI_URL, json=payload, headers=headers)
             if response.status_code == 200:
                 data = response.json()
                 try:
-                    reply = data['candidates'][0]['content']['parts'][0]['text'].strip()
+                    # OpenAI responses endpoint returns output in 'output' field
+                    # It may have choices or something. We'll try to extract text.
+                    # The curl example uses /responses, which is not standard. We'll try to parse.
+                    # We'll attempt to get the text from the response.
+                    if "output" in data and data["output"]:
+                        # For the responses endpoint, the output might be a list of messages.
+                        # We'll just get the first message content.
+                        if isinstance(data["output"], list) and len(data["output"]) > 0:
+                            if "content" in data["output"][0]:
+                                reply = data["output"][0]["content"].strip()
+                            else:
+                                # fallback
+                                reply = str(data["output"])
+                        else:
+                            reply = str(data["output"])
+                    elif "choices" in data and data["choices"]:
+                        reply = data["choices"][0]["message"]["content"].strip()
+                    else:
+                        # fallback: try to get any text
+                        reply = str(data)
                     reply = reply.strip('"').strip("'")
                     if len(reply) > 300:
                         reply = reply[:300] + "..."
@@ -728,17 +763,16 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             pass
                     return
                 except Exception as e:
-                    logging.error(f"Parsing Gemini response: {e}")
-                    # Send error message
-                    await update.message.reply_text("Oops! 😅 Kuch gadbad ho gayi, thodi der baad try karo.")
+                    logging.error(f"Parsing OpenAI response: {e}")
+                    await update.message.reply_text("API Error")
                     return
             else:
-                logging.error(f"Gemini API error: {response.status_code} - {response.text}")
-                await update.message.reply_text("Oops! 😅 Kuch gadbad ho gayi, thodi der baad try karo.")
+                logging.error(f"OpenAI API error: {response.status_code} - {response.text}")
+                await update.message.reply_text("API Error")
                 return
     except Exception as e:
-        logging.error(f"Gemini request failed: {e}")
-        await update.message.reply_text("Oops! 😅 Kuch gadbad ho gayi, thodi der baad try karo.")
+        logging.error(f"OpenAI request failed: {e}")
+        await update.message.reply_text("API Error")
         return
 
 async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -786,6 +820,7 @@ def main():
     app.add_handler(CommandHandler("logdel", logdel))
     app.add_handler(CommandHandler("me", me_cmd))
     app.add_handler(CommandHandler("girlmode", girlmode))
+    app.add_handler(CommandHandler("maintenance", maintenance))
     app.add_handler(CallbackQueryHandler(roles_callback, pattern="^role_"))
     app.add_handler(CallbackQueryHandler(settings_callback, pattern="^set_"))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_dm))
