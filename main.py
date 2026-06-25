@@ -5,44 +5,33 @@ import html
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
-# ✅ FIXED IMPORT – ParseMode hata diya
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, JobQueue
 
-# ---------- CONFIG (TUNA DAAL DIYA HAI) ----------
+# ---------- CONFIG ----------
 BOT_TOKEN = "8949615977:AAGr7oJagOGpgtq_t_AgJWXOd5Sj25mrmcY"
 OWNER_ID = 8477195695
-CO_OWNER_IDS = [8477195695]  # Co-Founders list
+CO_OWNER_IDS = [8477195695]
 
 WARN_LIMIT = 3
-MUTE_DURATION_SECONDS = 3600  # 1 hour
-CLEANUP_INTERVAL = 59  # minutes
+MUTE_DURATION_SECONDS = 3600
+CLEANUP_INTERVAL = 59
 
-# ---------- DATABASE SETUP ----------
-conn = sqlite3.connect("oggy_data.db", check_same_thread=False)
+# ---------- DATABASE ----------
+conn = sqlite3.connect("oggy_da_ta.db", check_same_thread=False)
 c = conn.cursor()
 
-# Warns table
 c.execute('''CREATE TABLE IF NOT EXISTS warns
              (user_id INTEGER, chat_id INTEGER, count INTEGER, PRIMARY KEY (user_id, chat_id))''')
-
-# Mutes table
 c.execute('''CREATE TABLE IF NOT EXISTS mutes
              (user_id INTEGER, chat_id INTEGER, until INTEGER, PRIMARY KEY (user_id, chat_id))''')
-
-# Custom Roles (Moderator, Cleaner, Muter, Helper, Free)
 c.execute('''CREATE TABLE IF NOT EXISTS user_roles
              (user_id INTEGER, chat_id INTEGER, role TEXT, PRIMARY KEY (user_id, chat_id))''')
-
-# Group Settings (link_guard, dm_guard, badword_guard, cleanup_enabled, log_channel)
 c.execute('''CREATE TABLE IF NOT EXISTS group_settings
              (chat_id INTEGER PRIMARY KEY, link_guard INTEGER DEFAULT 1, dm_guard INTEGER DEFAULT 1, 
               badword_guard INTEGER DEFAULT 1, cleanup_enabled INTEGER DEFAULT 1, log_channel INTEGER DEFAULT 0)''')
-
-# Bad words list per group (optional)
 c.execute('''CREATE TABLE IF NOT EXISTS bad_words
              (chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word))''')
-
 conn.commit()
 
 # ---------- HELPERS ----------
@@ -50,7 +39,6 @@ def get_setting(chat_id: int, key: str) -> bool:
     c.execute(f"SELECT {key} FROM group_settings WHERE chat_id=?", (chat_id,))
     row = c.fetchone()
     if row is None:
-        # default values: 1 for True, 0 for False
         defaults = {"link_guard": 1, "dm_guard": 1, "badword_guard": 1, "cleanup_enabled": 1}
         val = defaults.get(key, 1)
         c.execute("INSERT INTO group_settings (chat_id, link_guard, dm_guard, badword_guard, cleanup_enabled, log_channel) VALUES (?,1,1,1,1,0)", (chat_id,))
@@ -71,7 +59,6 @@ def set_log_channel(chat_id: int, log_id: int):
     c.execute("INSERT OR REPLACE INTO group_settings (chat_id, log_channel) VALUES (?,?)", (chat_id, log_id))
     conn.commit()
 
-# Warn functions
 def get_warn_count(user_id: int, chat_id: int) -> int:
     c.execute("SELECT count FROM warns WHERE user_id=? AND chat_id=?", (user_id, chat_id))
     row = c.fetchone()
@@ -94,7 +81,6 @@ def get_all_warns(chat_id: int) -> List[tuple]:
     c.execute("SELECT user_id, count FROM warns WHERE chat_id=?", (chat_id,))
     return c.fetchall()
 
-# Mute functions
 def set_mute(user_id: int, chat_id: int, duration_sec: int):
     until = int((datetime.now() + timedelta(seconds=duration_sec)).timestamp())
     c.execute("INSERT OR REPLACE INTO mutes (user_id, chat_id, until) VALUES (?,?,?)", (user_id, chat_id, until))
@@ -114,7 +100,6 @@ def is_muted(user_id: int, chat_id: int) -> bool:
             remove_mute(user_id, chat_id)
     return False
 
-# Role functions
 def get_role(user_id: int, chat_id: int) -> str:
     c.execute("SELECT role FROM user_roles WHERE user_id=? AND chat_id=?", (user_id, chat_id))
     row = c.fetchone()
@@ -128,7 +113,6 @@ def remove_role(user_id: int, chat_id: int):
     c.execute("DELETE FROM user_roles WHERE user_id=? AND chat_id=?", (user_id, chat_id))
     conn.commit()
 
-# Permission Checkers
 def is_founder(user_id: int) -> bool:
     return user_id == OWNER_ID
 
@@ -138,7 +122,6 @@ def is_cofounder(user_id: int) -> bool:
 async def is_admin(user_id: int, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     if is_founder(user_id) or is_cofounder(user_id):
         return True
-    # Check Telegram Admin
     try:
         admins = context.bot_data.get(f"admins_{chat_id}")
         if admins is None:
@@ -153,17 +136,14 @@ def has_role(user_id: int, chat_id: int, required_roles: List[str]) -> bool:
     return role in required_roles
 
 async def can_use_admin_cmd(user_id: int, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    # 🕵️ Admin commands: Founder, Co-Founder, or Telegram Admin
     return await is_admin(user_id, chat_id, context)
 
 async def can_use_mod_cmd(user_id: int, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    # 👮 Admin & Moderator commands
     if await can_use_admin_cmd(user_id, chat_id, context):
         return True
     return has_role(user_id, chat_id, ["Moderator"])
 
 async def can_use_cleaner_cmd(user_id: int, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    # 🛃 Admin & Cleaner commands
     if await can_use_admin_cmd(user_id, chat_id, context):
         return True
     return has_role(user_id, chat_id, ["Cleaner"])
@@ -237,7 +217,6 @@ async def cleanercmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "/logdel - Delete & log to channel")
     await update.message.reply_text(txt, parse_mode="Markdown")
 
-# ---------- ROLE MANAGEMENT (/roles) ----------
 async def roles_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context):
         return await update.message.reply_text("❌ Sirf Admin/Founder/Co-Founder.")
@@ -252,11 +231,9 @@ async def roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = int(data[2])
     if not await can_use_admin_cmd(query.from_user.id, chat_id, context):
         return await query.edit_message_text("❌ No permission.")
-    # Wait for reply to user
     context.user_data['pending_role'] = role
     context.user_data['target_chat'] = chat_id
     await query.edit_message_text(f"📌 Role `{role}` selected. Now **reply** to the user's message with anything to assign this role.", parse_mode="Markdown")
-    # We'll handle it in a message handler.
 
 async def handle_role_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'pending_role' not in context.user_data:
@@ -274,7 +251,6 @@ async def handle_role_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {target.mention_html()} assigned as `{role}`", parse_mode="HTML")
     del context.user_data['pending_role']
 
-# ---------- SETTINGS ----------
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context):
         return
@@ -288,13 +264,10 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = int(data[2])
     if not await can_use_admin_cmd(query.from_user.id, chat_id, context):
         return await query.edit_message_text("❌ No permission.")
-    
     if action == "log":
         await query.edit_message_text("📝 Send me the **Log Channel ID** now.\n(Reply to this message with the ID)")
         context.user_data['awaiting_log'] = chat_id
         return
-    
-    # Toggle settings
     setting_map = {"link": "link_guard", "dm": "dm_guard", "badword": "badword_guard", "cleanup": "cleanup_enabled"}
     key = setting_map.get(action)
     if key:
@@ -316,7 +289,6 @@ async def handle_log_channel(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Invalid ID. Send numeric ID.")
     del context.user_data['awaiting_log']
 
-# ---------- ADMIN/MOD COMMANDS ----------
 async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context):
         return
@@ -369,7 +341,6 @@ async def delwarn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         return
     user = update.message.reply_to_message.from_user
-    # Delete the replied message
     try:
         await update.message.reply_to_message.delete()
     except:
@@ -444,7 +415,6 @@ async def staff(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = "👥 **Staff List**\n"
     for a in admins:
         txt += f"• {a.user.full_name} ({a.status})\n"
-    # Add custom roles
     c.execute("SELECT user_id, role FROM user_roles WHERE chat_id=?", (chat_id,))
     custom = c.fetchall()
     for uid, role in custom:
@@ -540,7 +510,6 @@ async def cleanup_messages(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Cleanup error {chat_id}: {e}")
 
-# ---------- LINK & BADWORD FILTER ----------
 async def filter_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -598,12 +567,10 @@ async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.delete()
     except:
         pass
-    # Warn in a virtual chat (user's own ID as chat)
-    count = add_warn(user.id, user.id)  # unique identifier
+    count = add_warn(user.id, user.id)
     await context.bot.send_message(user.id, f"⚠️ DM karna mana hai! {count}/{WARN_LIMIT} warnings. Next time block.")
     if count >= WARN_LIMIT:
         reset_warns(user.id, user.id)
-        # Block user
         await context.bot.block_user(user.id)
 
 # ---------- MAIN ----------
@@ -611,7 +578,6 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data = {}
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("modcmds", modcmds))
     app.add_handler(CommandHandler("admincmds", admincmds))
@@ -637,19 +603,17 @@ def main():
     app.add_handler(CommandHandler("logdel", logdel))
     app.add_handler(CommandHandler("me", me_cmd))
 
-    # Callbacks
     app.add_handler(CallbackQueryHandler(roles_callback, pattern="^role_"))
     app.add_handler(CallbackQueryHandler(settings_callback, pattern="^set_"))
 
-    # Message handlers
-    app.add_handler(MessageHandler(filters.PRIVATE & ~filters.COMMAND, handle_dm))
+    # ✅ FIX: filters.PRIVATE → filters.ChatType.PRIVATE
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_dm))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_links), group=2)
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_badwords), group=3)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, store_message), group=1)
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, handle_role_reply), group=4)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_log_channel), group=5)
 
-    # Job queue
     job_queue = app.job_queue
     job_queue.run_repeating(cleanup_messages, interval=CLEANUP_INTERVAL*60, first=10)
 
