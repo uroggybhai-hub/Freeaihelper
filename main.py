@@ -3,11 +3,14 @@ import sqlite3
 import re
 import html
 import random
+import httpx
+import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, JobQueue
 
+# ---------- CONFIG ----------
 BOT_TOKEN = "8949615977:AAGr7oJagOGpgtq_t_AgJWXOd5Sj25mrmcY"
 OWNER_ID = 8477195695
 CO_OWNER_IDS = [8477195695]
@@ -15,6 +18,11 @@ WARN_LIMIT = 3
 MUTE_DURATION_SECONDS = 3600
 CLEANUP_INTERVAL = 59
 
+# ---------- GEMINI API KEY (TUNA DIYA) ----------
+GEMINI_API_KEY = "AQ.Ab8RN6IDn17tilz4oxZByi8D9tvDq_J61ZH7_EbQOrDT8-6FoA"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+
+# ---------- FALLBACK REPLIES ----------
 GIRL_REPLIES = [
     "Haan boliye na 😘 aapka intezaar tha 🥺",
     "Arre kya haal hai aapke? 🫠 kuch naya?",
@@ -93,6 +101,7 @@ STICKERS = [
     "CAACAgQAAxkBAAED2Tdl7HmHxYz..."
 ]
 
+# ---------- DATABASE ----------
 conn = sqlite3.connect("oggy_data.db", check_same_thread=False)
 c = conn.cursor()
 try:
@@ -106,6 +115,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS group_settings (chat_id INTEGER PRIMARY 
 c.execute('''CREATE TABLE IF NOT EXISTS bad_words (chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word))''')
 conn.commit()
 
+# ---------- HELPERS ----------
 def get_setting(chat_id: int, key: str) -> bool:
     try:
         c.execute(f"SELECT {key} FROM group_settings WHERE chat_id=?", (chat_id,))
@@ -576,7 +586,7 @@ async def girlmode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(f"💁‍♀️ Girl mode is currently: {status}\nTo toggle: /girlmode on/off")
     if args[0].lower() == "on":
         set_setting(chat_id, "girl_mode", True)
-        await update.message.reply_text("💁‍♀️ Girl mode enabled! Ab main sabko ladki jaisi replies dungi 😘")
+        await update.message.reply_text("💁‍♀️ Girl mode enabled! Ab main AI se reply dungi 😘")
     elif args[0].lower() == "off":
         set_setting(chat_id, "girl_mode", False)
         await update.message.reply_text("💁‍♀️ Girl mode disabled. Ab main normal helper ban jaungi 😐")
@@ -704,6 +714,7 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_msg[chat_id][user.id] = text
         spam_warns[chat_id][user.id] = 0
 
+# ---------- GIRL AUTO-REPLY WITH GEMINI AI ----------
 async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -716,20 +727,67 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not get_setting(chat_id, "girl_mode"):
         return
-    text = update.message.text.lower()
-    if re.search(r'(hack|cheat|mod|bgmi|free fire|ff|injector|aimbot|wallhack|esp)', text):
+
+    user_msg = update.message.text
+    # Hack detection – still using @UROGGY
+    if re.search(r'(hack|cheat|mod|bgmi|free fire|ff|injector|aimbot|wallhack|esp)', user_msg, re.I):
         reply = f"Arey bhai, hack ke liye @UROGGY ko DM karo 😏, woh expert hai. Main toh bas pyaar baantti hu 💖"
         await update.message.reply_text(reply)
         return
-    reply = random.choice(GIRL_REPLIES)
-    if not any(emoji in reply for emoji in ["😘","🥺","😍","😈","🔥","❤️","💋","🫠","🥰","😭","🌚","🤡","🥀","😎","🧠","🌹","🌸","💖"]):
-        reply += random.choice([" 😘", " 🥰", " 😍", " 💋", " ❤️", " 🥺", " 😈"])
-    await update.message.reply_text(reply)
-    if random.random() < 0.2 and STICKERS:
-        try:
-            await update.message.reply_sticker(random.choice(STICKERS))
-        except:
-            pass
+
+    # Determine reply length based on user message length
+    if len(user_msg) < 20:
+        length_instruction = "Reply very briefly in 1-2 lines, Hinglish, emoji."
+    else:
+        length_instruction = "Reply with a detailed response, 2-4 lines, Hinglish, emoji."
+
+    prompt = f"Tu ek desi ladki hai jo Hinglish mein baat karti hai, emoji aur attitude ke saath. User ne kaha: '{user_msg}'. {length_instruction}"
+
+    # Call Gemini API
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt}
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.85,
+                    "maxOutputTokens": 100 if len(user_msg) < 20 else 200,
+                }
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "X-goog-api-key": GEMINI_API_KEY
+            }
+            response = await client.post(GEMINI_URL, json=payload, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                try:
+                    reply = data['candidates'][0]['content']['parts'][0]['text'].strip()
+                    reply = reply.strip('"').strip("'")
+                    if len(reply) > 300:
+                        reply = reply[:300] + "..."
+                    await update.message.reply_text(reply)
+                    if random.random() < 0.2 and STICKERS:
+                        try:
+                            await update.message.reply_sticker(random.choice(STICKERS))
+                        except:
+                            pass
+                    return
+                except Exception as e:
+                    logging.error(f"Parsing Gemini response: {e}")
+            else:
+                logging.error(f"Gemini API error: {response.status_code} - {response.text}")
+    except Exception as e:
+        logging.error(f"Gemini request failed: {e}")
+
+    # Fallback random reply
+    fallback = random.choice(GIRL_REPLIES)
+    await update.message.reply_text(fallback)
 
 async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
