@@ -5,20 +5,16 @@ import html
 import random
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, JobQueue
 
-# ---------- CONFIG ----------
 BOT_TOKEN = "8949615977:AAGr7oJagOGpgtq_t_AgJWXOd5Sj25mrmcY"
 OWNER_ID = 8477195695
 CO_OWNER_IDS = [8477195695]
-
 WARN_LIMIT = 3
 MUTE_DURATION_SECONDS = 3600
 CLEANUP_INTERVAL = 59
 
-# ---------- GIRL REPLIES ----------
 GIRL_REPLIES = [
     "Haan boliye na 😘 aapka intezaar tha 🥺",
     "Arre kya haal hai aapke? 🫠 kuch naya?",
@@ -91,36 +87,25 @@ BADWORD_REPLIES = [
     "Maine aapki message delete kar di, kyunki main aapki dost hoon 🥺"
 ]
 
-# Stickers: Replace with actual file_ids from your bot. If empty, no stickers sent.
 STICKERS = [
     "CAACAgQAAxkBAAED2TVl7HmHxYz...",
     "CAACAgQAAxkBAAED2TZl7HmHxYz...",
-    "CAACAgQAAxkBAAED2Tdl7HmHxYz...",
+    "CAACAgQAAxkBAAED2Tdl7HmHxYz..."
 ]
 
-# ---------- DATABASE ----------
 conn = sqlite3.connect("oggy_data.db", check_same_thread=False)
 c = conn.cursor()
-
 try:
     c.execute("ALTER TABLE group_settings ADD COLUMN girl_mode INTEGER DEFAULT 1")
 except sqlite3.OperationalError:
     pass
-
-c.execute('''CREATE TABLE IF NOT EXISTS warns
-             (user_id INTEGER, chat_id INTEGER, count INTEGER, PRIMARY KEY (user_id, chat_id))''')
-c.execute('''CREATE TABLE IF NOT EXISTS mutes
-             (user_id INTEGER, chat_id INTEGER, until INTEGER, PRIMARY KEY (user_id, chat_id))''')
-c.execute('''CREATE TABLE IF NOT EXISTS user_roles
-             (user_id INTEGER, chat_id INTEGER, role TEXT, PRIMARY KEY (user_id, chat_id))''')
-c.execute('''CREATE TABLE IF NOT EXISTS group_settings
-             (chat_id INTEGER PRIMARY KEY, link_guard INTEGER DEFAULT 1, dm_guard INTEGER DEFAULT 1, 
-              badword_guard INTEGER DEFAULT 1, cleanup_enabled INTEGER DEFAULT 1, log_channel INTEGER DEFAULT 0, girl_mode INTEGER DEFAULT 1)''')
-c.execute('''CREATE TABLE IF NOT EXISTS bad_words
-             (chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word))''')
+c.execute('''CREATE TABLE IF NOT EXISTS warns (user_id INTEGER, chat_id INTEGER, count INTEGER, PRIMARY KEY (user_id, chat_id))''')
+c.execute('''CREATE TABLE IF NOT EXISTS mutes (user_id INTEGER, chat_id INTEGER, until INTEGER, PRIMARY KEY (user_id, chat_id))''')
+c.execute('''CREATE TABLE IF NOT EXISTS user_roles (user_id INTEGER, chat_id INTEGER, role TEXT, PRIMARY KEY (user_id, chat_id))''')
+c.execute('''CREATE TABLE IF NOT EXISTS group_settings (chat_id INTEGER PRIMARY KEY, link_guard INTEGER DEFAULT 1, dm_guard INTEGER DEFAULT 1, badword_guard INTEGER DEFAULT 1, cleanup_enabled INTEGER DEFAULT 1, log_channel INTEGER DEFAULT 0, girl_mode INTEGER DEFAULT 1)''')
+c.execute('''CREATE TABLE IF NOT EXISTS bad_words (chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word))''')
 conn.commit()
 
-# ---------- HELPERS ----------
 def get_setting(chat_id: int, key: str) -> bool:
     try:
         c.execute(f"SELECT {key} FROM group_settings WHERE chat_id=?", (chat_id,))
@@ -237,13 +222,11 @@ async def can_use_cleaner_cmd(user_id: int, chat_id: int, context: ContextTypes.
         return True
     return has_role(user_id, chat_id, ["Cleaner"])
 
-# ---------- NOTIFY OWNER ----------
 async def notify_owner(context: ContextTypes.DEFAULT_TYPE, text: str):
     await context.bot.send_message(OWNER_ID, text)
     for co in CO_OWNER_IDS:
         await context.bot.send_message(co, text)
 
-# ---------- INLINE KEYBOARDS ----------
 def get_roles_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton("👑 Founder", callback_data=f"role_Founder_{chat_id}"),
@@ -273,7 +256,6 @@ def get_settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(buttons)
 
-# ---------- COMMAND HANDLERS ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🔥 **OGGYAI ULTIMATE HELPER + GIRL AI**\n\n"
@@ -315,7 +297,6 @@ async def cleanercmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "/logdel - Delete & log to channel")
     await update.message.reply_text(txt, parse_mode="Markdown")
 
-# ---------- ROLE MANAGEMENT ----------
 async def roles_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context):
         return await update.message.reply_text("❌ Sirf Admin/Founder/Co-Founder.")
@@ -350,7 +331,6 @@ async def handle_role_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {target.mention_html()} assigned as `{role}`", parse_mode="HTML")
     del context.user_data['pending_role']
 
-# ---------- SETTINGS ----------
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context):
         return
@@ -389,7 +369,6 @@ async def handle_log_channel(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Invalid ID. Send numeric ID.")
     del context.user_data['awaiting_log']
 
-# ---------- ADMIN/MOD COMMANDS (All defined) ----------
 async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_mod_cmd(update.effective_user.id, update.effective_chat.id, context):
         return
@@ -546,7 +525,6 @@ async def intervention(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(co, txt, parse_mode="HTML")
     await update.message.reply_text("✅ Support notified.")
 
-# ---------- OTHER COMMANDS ----------
 async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await can_use_admin_cmd(update.effective_user.id, update.effective_chat.id, context): return
     context.bot_data.pop(f"admins_{update.effective_chat.id}", None)
@@ -605,7 +583,6 @@ async def girlmode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Usage: /girlmode on/off")
 
-# ---------- AUTO FILTERS ----------
 message_store: Dict[int, List[int]] = {}
 
 async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -639,7 +616,6 @@ async def cleanup_messages(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Cleanup error {chat_id}: {e}")
 
-# ---------- LINK & BADWORD FILTERS ----------
 async def filter_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -691,7 +667,6 @@ async def filter_badwords(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await notify_owner(context, f"🔇 Muted (bad words): {user.full_name} (ID: {user.id}) in {update.effective_chat.title or 'group'}")
             break
 
-# ---------- SPAM DETECTION ----------
 last_msg: Dict[int, Dict[int, str]] = {}
 spam_warns: Dict[int, Dict[int, int]] = {}
 
@@ -729,7 +704,6 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_msg[chat_id][user.id] = text
         spam_warns[chat_id][user.id] = 0
 
-# ---------- GIRL AUTO-REPLY (with hack detection) ----------
 async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -742,28 +716,21 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not get_setting(chat_id, "girl_mode"):
         return
-
     text = update.message.text.lower()
-    # Hack detection
     if re.search(r'(hack|cheat|mod|bgmi|free fire|ff|injector|aimbot|wallhack|esp)', text):
         reply = f"Arey bhai, hack ke liye @UROGGY ko DM karo 😏, woh expert hai. Main toh bas pyaar baantti hu 💖"
         await update.message.reply_text(reply)
         return
-
-    # Normal reply
     reply = random.choice(GIRL_REPLIES)
     if not any(emoji in reply for emoji in ["😘","🥺","😍","😈","🔥","❤️","💋","🫠","🥰","😭","🌚","🤡","🥀","😎","🧠","🌹","🌸","💖"]):
         reply += random.choice([" 😘", " 🥰", " 😍", " 💋", " ❤️", " 🥺", " 😈"])
     await update.message.reply_text(reply)
-
-    # Random sticker
     if random.random() < 0.2 and STICKERS:
         try:
             await update.message.reply_sticker(random.choice(STICKERS))
         except:
             pass
 
-# ---------- DM HANDLER ----------
 async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
@@ -781,11 +748,9 @@ async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.block_user(user.id)
     await notify_owner(context, f"📩 DM attempt: {user.full_name} (ID: {user.id}) – warned ({count})")
 
-# ---------- MAIN ----------
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data = {}
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("modcmds", modcmds))
     app.add_handler(CommandHandler("admincmds", admincmds))
@@ -811,10 +776,8 @@ def main():
     app.add_handler(CommandHandler("logdel", logdel))
     app.add_handler(CommandHandler("me", me_cmd))
     app.add_handler(CommandHandler("girlmode", girlmode))
-
     app.add_handler(CallbackQueryHandler(roles_callback, pattern="^role_"))
     app.add_handler(CallbackQueryHandler(settings_callback, pattern="^set_"))
-
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_dm))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_links), group=2)
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, filter_badwords), group=3)
@@ -823,10 +786,8 @@ def main():
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, store_message), group=1)
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, handle_role_reply), group=6)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_log_channel), group=7)
-
     job_queue = app.job_queue
     job_queue.run_repeating(cleanup_messages, interval=CLEANUP_INTERVAL*60, first=10)
-
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
