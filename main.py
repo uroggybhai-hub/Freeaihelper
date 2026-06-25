@@ -5,6 +5,7 @@ import re
 import html
 import random
 import httpx
+import asyncio
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
@@ -25,9 +26,12 @@ WARN_LIMIT = 3
 MUTE_DURATION_SECONDS = 3600
 CLEANUP_INTERVAL = 59
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
-OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # Fallback to gpt-3.5-turbo later
+FALLBACK_MODEL = "gpt-3.5-turbo"
 
-# ---------- FALLBACK (only for badwords) ----------
+openai_semaphore = asyncio.Semaphore(1)
+
+# ---------- BADWORD REPLIES ----------
 BADWORD_REPLIES = [
     "Arey, kya gaali de rahe ho? 😾 Sharam karo! Aise baat nahi karte.",
     "Itna gussa? Chalo, thoda pyaar do 🤗 Gaali mat do.",
@@ -689,7 +693,31 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_msg[chat_id][user.id] = text
         spam_warns[chat_id][user.id] = 0
 
-# ---------- GIRL AUTO-REPLY – ONLY OPENAI (NO FALLBACK) ----------
+# ---------- GIRL AUTO-REPLY – WITH FALLBACK MODEL ----------
+async def call_openai(prompt: str, model: str) -> str:
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 200,
+        "temperature": 0.85
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(OPENAI_URL, json=payload, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return data['choices'][0]['message']['content'].strip()
+        else:
+            error_text = response.text
+            logging.error(f"OpenAI error {response.status_code}: {error_text}")
+            # If model not found or unavailable, we can try fallback
+            if response.status_code == 404 or "model" in error_text.lower():
+                return None  # indicate model not found
+            raise Exception(f"API error: {response.status_code} - {error_text}")
+
 async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -703,64 +731,46 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not get_setting(chat_id, "girl_mode"):
         return
 
-    # MAINTENANCE MODE: Only send maintenance message and return (no other reply)
     if context.bot_data.get(MAINTENANCE_KEY, False):
         await update.message.reply_text("🔧 Bot maintenance mode, please wait.")
         return
 
     user_msg = update.message.text
 
-    # Hack detection – immediate reply (no API)
     if re.search(r'(hack|cheat|mod|bgmi|free fire|ff|injector|aimbot|wallhack|esp)', user_msg, re.I):
         reply = f"Arey bhai, hack ke liye @UROGGY ko DM karo 😏, woh expert hai. Main toh bas pyaar baantti hu 💖"
         await update.message.reply_text(reply)
         return
 
-    # Prepare OpenAI chat completions payload
-    prompt = f"Tu ek desi ladki hai jo Hinglish mein baat karti hai, emoji aur attitude ke saath. User ne kaha: '{user_msg}'. Chhota ya detailed reply dekh kar de – chhoti baat par chhota, badi baat par detailed."
+    async with openai_semaphore:
+        await asyncio.sleep(0.5)  # gentle rate limiting
 
-    payload = {
-        "model": OPENAI_MODEL,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 200 if len(user_msg) < 20 else 300,
-        "temperature": 0.85
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
+        prompt = f"Tu ek desi ladki hai jo Hinglish mein baat karti hai, emoji aur attitude ke saath. User ne kaha: '{user_msg}'. Chhota ya detailed reply dekh kar de – chhoti baat par chhota, badi baat par detailed."
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(OPENAI_URL, json=payload, headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                try:
-                    reply = data['choices'][0]['message']['content'].strip()
-                    reply = reply.strip('"').strip("'")
-                    if len(reply) > 300:
-                        reply = reply[:300] + "..."
-                    await update.message.reply_text(reply)
-                    if random.random() < 0.2 and STICKERS:
-                        try:
-                            await update.message.reply_sticker(random.choice(STICKERS))
-                        except:
-                            pass
-                    return
-                except Exception as e:
-                    logging.error(f"Parsing OpenAI response: {e}")
-                    await update.message.reply_text("API Error")
-                    return
-            else:
-                logging.error(f"OpenAI API error: {response.status_code} - {response.text}")
-                await update.message.reply_text("API Error")
+        try:
+            # First try primary model
+            reply = await call_openai(prompt, OPENAI_MODEL)
+            if reply is None:
+                # Fallback to gpt-3.5-turbo
+                logging.warning("Primary model failed, trying fallback gpt-3.5-turbo")
+                reply = await call_openai(prompt, FALLBACK_MODEL)
+            if reply is None:
+                await update.message.reply_text("API Error: Model unavailable")
                 return
-    except Exception as e:
-        logging.error(f"OpenAI request failed: {e}")
-        await update.message.reply_text("API Error")
-        return
+            reply = reply.strip('"').strip("'")
+            if len(reply) > 300:
+                reply = reply[:300] + "..."
+            await update.message.reply_text(reply)
+            if random.random() < 0.2 and STICKERS:
+                try:
+                    await update.message.reply_sticker(random.choice(STICKERS))
+                except:
+                    pass
+            return
+        except Exception as e:
+            logging.error(f"OpenAI call failed: {e}")
+            await update.message.reply_text("API Error")
+            return
 
 async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
