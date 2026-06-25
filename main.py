@@ -1,4 +1,5 @@
 import logging
+import logging
 import sqlite3
 import re
 import html
@@ -22,60 +23,8 @@ CLEANUP_INTERVAL = 59
 GEMINI_API_KEY = "AQ.Ab8RN6IDn17tilz4oxZByi8D9tvDq_J61ZH7_EbQOrDT8-6FoA"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
 
-# ---------- FALLBACK REPLIES ----------
-GIRL_REPLIES = [
-    "Haan boliye na 😘 aapka intezaar tha 🥺",
-    "Arre kya haal hai aapke? 🫠 kuch naya?",
-    "Mujhe toh bas aapse baat karni thi 🥰",
-    "Hmm… aap toh bohot smart ho 🌚",
-    "Kya baat kar rahe ho? Mujhe samjhao na 👉🏻👈🏻",
-    "Aapka style toh killer hai 😈🔥",
-    "Mujhe aapki awaz sunni hai 🥺 (chalo message hi sahi)",
-    "Arey yar, aapne toh mera mood bana diya 😍",
-    "Kya aap single ho? 😂 (bas mazaak kar rahi hu)",
-    "Aaj kal aap kaam mein busy ho? 🫠",
-    "Main toh bas aapko tease kar rahi hu 😜",
-    "Haye, itna cute reply kiya ❤️",
-    "Aapki tarah koi nahi 🌹",
-    "Chalo koi mast joke sunao 🤡",
-    "Mujhe toh aapse baat karke accha lagta hai 🥀",
-    "Aap mujhe ignore karte ho 😭",
-    "Main hoon na, tension mat lo 🫂",
-    "Kya aap mujhe date pe le jayenge? 😝",
-    "Arre, aap toh mere fan lagte ho 😏",
-    "Mera dil toh aapke liye dhadakta hai 💓",
-    "Bas karo, itna mat bolo, main shy ho jaaungi 😳",
-    "Haan haan, aap hi ho mere fav 😘",
-    "Kya kar rahe ho? Batao na 🥺",
-    "Aap kaise ho? Main toh aapke liye pagal hu 😍",
-    "Itna time baad yaad aaya? 😠 (just kidding)",
-    "Aapki baatein sunke accha lagta hai 🎀",
-    "Mera mood off hai, aap kuch funny bolo 😔",
-    "Chalo thoda romance karte hain 😈",
-    "Aap mujhe samajhte ho, isliye main aapko pasand karti hu 🌸",
-    "Kya aap mere liye kuch karoge? 😇",
-    "Mujhe aapka style pasand hai 😎",
-    "Aap bohot intelligent ho 🧠",
-    "Mere sapno mein aap aate ho 😴",
-    "Aap ho hi itne cute 🥰",
-    "Main toh aapki deewani hu 💋",
-    "Chalo selfie bhejo 📸",
-    "Aapki yaad aayi 😢",
-    "Kya aap mera best friend banoge? 🥹",
-    "Mujhe toh bas aapse pyaar hai 💖",
-    "Haye, itna attention de rahe ho 😍",
-    "Kya aapko meri yaad aati hai? 😭",
-    "Mera dil bekaraar hai aapke liye 🥀",
-    "Aap kya soch rahe ho? Batao 😏",
-    "Main aapki deewani hoon, bas itna bata do 💘",
-    "Kya aap mere saath time spend karoge? 🥺",
-    "Mujhe aapse baat karke khushi hoti hai 🥰",
-    "Aapki muskurahat bahut cute hai 🌸",
-    "Main aapko miss kar rahi hu 😢",
-    "Aap ho meri zindagi mein special 😇",
-    "Chalo aaj kuch maza karte hain 😈",
-    "Aapka reply dekh kar dil khush ho gaya ❤️"
-]
+# ---------- NO FALLBACK REPLIES – REMOVED ----------
+# (GIRL_REPLIES still exists for reference, but not used in girl_auto_reply)
 
 BADWORD_REPLIES = [
     "Arey, kya gaali de rahe ho? 😾 Sharam karo! Aise baat nahi karte.",
@@ -714,7 +663,7 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_msg[chat_id][user.id] = text
         spam_warns[chat_id][user.id] = 0
 
-# ---------- GIRL AUTO-REPLY WITH GEMINI AI ----------
+# ---------- GIRL AUTO-REPLY – ONLY API, NO FALLBACK ----------
 async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -729,7 +678,8 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_msg = update.message.text
-    # Hack detection – still using @UROGGY
+
+    # Hack detection – immediate reply (no API)
     if re.search(r'(hack|cheat|mod|bgmi|free fire|ff|injector|aimbot|wallhack|esp)', user_msg, re.I):
         reply = f"Arey bhai, hack ke liye @UROGGY ko DM karo 😏, woh expert hai. Main toh bas pyaar baantti hu 💖"
         await update.message.reply_text(reply)
@@ -743,7 +693,6 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     prompt = f"Tu ek desi ladki hai jo Hinglish mein baat karti hai, emoji aur attitude ke saath. User ne kaha: '{user_msg}'. {length_instruction}"
 
-    # Call Gemini API
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             payload = {
@@ -780,14 +729,17 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 except Exception as e:
                     logging.error(f"Parsing Gemini response: {e}")
+                    # Send error message
+                    await update.message.reply_text("Oops! 😅 Kuch gadbad ho gayi, thodi der baad try karo.")
+                    return
             else:
                 logging.error(f"Gemini API error: {response.status_code} - {response.text}")
+                await update.message.reply_text("Oops! 😅 Kuch gadbad ho gayi, thodi der baad try karo.")
+                return
     except Exception as e:
         logging.error(f"Gemini request failed: {e}")
-
-    # Fallback random reply
-    fallback = random.choice(GIRL_REPLIES)
-    await update.message.reply_text(fallback)
+        await update.message.reply_text("Oops! 😅 Kuch gadbad ho gayi, thodi der baad try karo.")
+        return
 
 async def handle_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
