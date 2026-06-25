@@ -1,4 +1,5 @@
-python-telegram-bot==20.6
+python-telegram-bot==20.8
+httpx==0.27.2
 appython-telegram-bot==20.6
 httpx
 python-dotenv
