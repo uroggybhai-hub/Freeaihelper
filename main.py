@@ -1,30 +1,33 @@
+import os
 import logging
 import sqlite3
 import re
 import html
 import random
 import httpx
-import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, JobQueue
 
-# ---------- CONFIG ----------
-BOT_TOKEN = "8949615977:AAGr7oJagOGpgtq_t_AgJWXOd5Sj25mrmcY"
-OWNER_ID = 8477195695
-CO_OWNER_IDS = [8477195695]
+# ---------- ENVIRONMENT VARIABLES ----------
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID", 0))
+CO_OWNER_IDS = [int(x) for x in os.getenv("CO_OWNER_IDS", "").split(",") if x]
+if OWNER_ID == 0 or not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN and OWNER_ID must be set in environment variables.")
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY must be set in environment variables.")
+
 WARN_LIMIT = 3
 MUTE_DURATION_SECONDS = 3600
 CLEANUP_INTERVAL = 59
-
-# ---------- OPENAI API KEY (CORRECT ENDPOINT & MODEL) ----------
-OPENAI_API_KEY = "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"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
-OPENAI_MODEL = "gpt-4o-mini"  # Safer, widely available
+OPENAI_MODEL = "gpt-4o-mini"
 
-# ---------- NO FALLBACK REPLIES – ONLY API OR ERROR ----------
-
+# ---------- FALLBACK (only for badwords) ----------
 BADWORD_REPLIES = [
     "Arey, kya gaali de rahe ho? 😾 Sharam karo! Aise baat nahi karte.",
     "Itna gussa? Chalo, thoda pyaar do 🤗 Gaali mat do.",
@@ -229,7 +232,7 @@ async def maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if args[0].lower() == "on":
         context.bot_data[MAINTENANCE_KEY] = True
-        await update.message.reply_text("🔧 Maintenance mode ENABLED. Bot sirf admin/owner commands chalayega.")
+        await update.message.reply_text("🔧 Maintenance mode ENABLED. Bot only replies with maintenance message.")
     elif args[0].lower() == "off":
         context.bot_data[MAINTENANCE_KEY] = False
         await update.message.reply_text("🔧 Maintenance mode DISABLED. Bot normal chalega.")
@@ -686,7 +689,7 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_msg[chat_id][user.id] = text
         spam_warns[chat_id][user.id] = 0
 
-# ---------- GIRL AUTO-REPLY – OPENAI API (CORRECT) ----------
+# ---------- GIRL AUTO-REPLY – ONLY OPENAI (NO FALLBACK) ----------
 async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
@@ -700,7 +703,7 @@ async def girl_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not get_setting(chat_id, "girl_mode"):
         return
 
-    # Check maintenance mode
+    # MAINTENANCE MODE: Only send maintenance message and return (no other reply)
     if context.bot_data.get(MAINTENANCE_KEY, False):
         await update.message.reply_text("🔧 Bot maintenance mode, please wait.")
         return
